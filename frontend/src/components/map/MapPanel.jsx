@@ -86,46 +86,80 @@ export default function MapPanel({ onPick }){
     }
 
     const initGlobe = async () => {
-      // Ensure Three is available globally for globe.gl
       try {
+        // load three and globe.gl and make sure three is available as window.THREE
         const threeModule = await import('three')
         const THREE = threeModule && (threeModule.default || threeModule)
         if (typeof window !== 'undefined' && !window.THREE) window.THREE = THREE
+
+        const Globe = (await import('globe.gl')).default
+        const earthImg = 'https://raw.githubusercontent.com/roblabs/globe.gl/master/example/img/earth-blue-marble.jpg'
+
+        if (globeEl.current && !globeRef.current) {
+          // ensure container has explicit size
+          try{ globeEl.current.style.height = `${window.innerHeight - 64 - 24}px` }catch(e){}
+          globeEl.current.style.width = '100%'
+
+          // wait until container has positive dimensions
+          const waitForSize = (el, attempts = 40) => new Promise(res => {
+            let i = 0
+            const t = setInterval(()=>{
+              const w = el.clientWidth || el.offsetWidth
+              const h = el.clientHeight || el.offsetHeight
+              if (w > 0 && h > 0) { clearInterval(t); return res(true) }
+              i++
+              if (i>=attempts) { clearInterval(t); return res(false) }
+            }, 50)
+          })
+
+          await waitForSize(globeEl.current)
+
+          const g = Globe()(globeEl.current)
+            .globeImageUrl(earthImg)
+            .showAtmosphere(true)
+            .backgroundColor('#071027')
+            .enablePointerInteraction(true)
+            .autoRotate(true)
+            .autoRotateSpeed(0.35)
+            .pointsData([])
+            .pointAltitude(0.01)
+            .pointColor(()=>'#ff8c42')
+            .pointRadius(0.2)
+
+          globeRef.current = g
+
+          g.onGlobeClick(({ lat, lng })=>{
+            const pin = { id: Date.now(), lat, lng }
+            setPins(p=>[pin, ...p])
+            if (onPick) onPick(lat,lng)
+            try{ g.pointOfView({ lat, lng, altitude: 1.5 }, 800) }catch(e){}
+          })
+
+          // force renderer to match container
+          setTimeout(()=>{
+            try{
+              const renderer = g.renderer && g.renderer()
+              if (renderer && renderer.setSize) renderer.setSize(globeEl.current.clientWidth, globeEl.current.clientHeight)
+              if (renderer && renderer.domElement) {
+                renderer.domElement.style.width = '100%'
+                renderer.domElement.style.height = '100%'
+                renderer.domElement.style.display = 'block'
+              }
+            }catch(e){console.warn('globe renderer sizing error', e)}
+          }, 120)
+
+          const resizeHandler = () => {
+            try{
+              const renderer = g.renderer && g.renderer()
+              if (renderer && renderer.setSize) renderer.setSize(globeEl.current.clientWidth, globeEl.current.clientHeight)
+            }catch(e){}
+          }
+          window.addEventListener('resize', resizeHandler)
+          globeRef.current.__cleanupResize = () => window.removeEventListener('resize', resizeHandler)
+        }
       } catch (err) {
-        console.warn('three import failed for globe, continuing', err)
-      }
-
-      const Globe = (await import('globe.gl')).default
-      // high-res earth image
-      const earthImg = 'https://raw.githubusercontent.com/roblabs/globe.gl/master/example/img/earth-blue-marble.jpg'
-      if (globeEl.current && !globeRef.current) {
-        // ensure globe container has an explicit pixel height (header + padding accounted)
-        try{ globeEl.current.style.height = `${window.innerHeight - 64 - 24}px` }catch(e){}
-        globeEl.current.style.width = '100%'
-
-        const g = Globe()(globeEl.current)
-          .globeImageUrl(earthImg)
-          .showAtmosphere(true)
-          .backgroundColor('#071027')
-          .enablePointerInteraction(true)
-          .autoRotate(true)
-          .autoRotateSpeed(0.35)
-          .pointsData([])
-          .pointAltitude(0.01)
-          .pointColor(()=>'#ff8c42')
-          .pointRadius(0.2)
-        globeRef.current = g
-
-        // handle globe clicks -> add pin
-        g.onGlobeClick(({ lat, lng })=>{
-          const pin = { id: Date.now(), lat, lng }
-          setPins(p=>[pin, ...p])
-          if (onPick) onPick(lat,lng)
-          try{ g.pointOfView({ lat, lng, altitude: 1.5 }, 800) }catch(e){}
-        })
-
-        // trigger an initial render / resize after mount
-        try{ setTimeout(()=>{ g.controls && g.controls().update && g.controls().update(); (g.renderer && g.renderer().setSize) && g.renderer().setSize(globeEl.current.clientWidth, globeEl.current.clientHeight) }, 120) }catch(e){}
+        console.error('Globe initialization failed', err)
+        setMapError('Failed to initialize 3D globe — check console for details')
       }
     }
 
