@@ -30,20 +30,21 @@ exports.preview = async (req, res) => {
       weather = { temp: null, description: 'Unavailable', clouds: null, visibility: null, error: err.message }
     }
 
-    const [webcamsRaw, photosRaw, satelliteRaw] = await Promise.all([
+    const [webcamsRaw, photosRaw, satelliteRaw, flickrRaw] = await Promise.all([
       webcamService.findNearby(lat, lng),
       photoService.searchNearby(lat, lng),
-      satelliteService.getLatest(lat, lng)
+      satelliteService.getLatest(lat, lng),
+      // Flickr is optional and will return [] if key missing
+      require('../services/flickrService').searchNearby(lat, lng)
     ])
 
     // Ensure any relative backend URLs (e.g. `/api/satellite/proxy?...`) are
     // returned to the client as absolute URLs so the browser can load them
     // regardless of frontend host/port. Use the current request host/protocol.
     const base = `${req.protocol}://${req.get('host')}`
-    const photos = (photosRaw || []).map(p => ({
-      ...p,
-      url: (p.url && p.url.startsWith('/')) ? `${base}${p.url}` : p.url
-    }))
+    // Merge Flickr photos first (most realistic crowd-sourced images), then satellite snapshot and sample photos
+    const flickrPhotos = (flickrRaw || []).map(p => ({ ...p, url: (p.url && p.url.startsWith('/')) ? `${base}${p.url}` : p.url }))
+    const photos = [ ...flickrPhotos, ...(photosRaw || []).map(p => ({ ...p, url: (p.url && p.url.startsWith('/')) ? `${base}${p.url}` : p.url })) ]
     const satellite = satelliteRaw && satelliteRaw.url ? {
       ...satelliteRaw,
       url: satelliteRaw.url.startsWith('/') ? `${base}${satelliteRaw.url}` : satelliteRaw.url
