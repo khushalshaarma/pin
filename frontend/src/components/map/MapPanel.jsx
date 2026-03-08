@@ -7,14 +7,13 @@ export default function MapPanel({ onPick }){
   const mapRef = useRef()
   const markerRef = useRef()
   const freeMapEl = useRef()
-  const globeEl = useRef()
   const leafletMapRef = useRef(null)
-  const globeRef = useRef(null)
   const [mapError, setMapError] = useState(null)
   const [manualLat, setManualLat] = useState('')
   const [manualLng, setManualLng] = useState('')
-  const [projection, setProjection] = useState('globe') // 'globe' or 'mercator'
+  // projection removed; always use mercator / 2D map
   const [pins, setPins] = useState([])
+  const leafletMarkersRef = useRef({})
 
   useEffect(()=>{
     // Initialize map or free alternatives depending on presence of token
@@ -29,10 +28,10 @@ export default function MapPanel({ onPick }){
 
         map = new mapboxgl.Map({
           container: mapEl.current,
-          style: projection === 'globe' ? 'mapbox://styles/mapbox/satellite-streets-v11' : 'mapbox://styles/mapbox/dark-v11',
+          style: 'mapbox://styles/mapbox/dark-v11',
           center: [78.9629,20.5937],
           zoom: 2.5,
-          projection: projection === 'globe' ? { name: 'globe' } : { name: 'mercator' }
+          projection: { name: 'mercator' }
         })
 
         map.on('click', (e)=>{
@@ -77,103 +76,29 @@ export default function MapPanel({ onPick }){
         map.on('click', e=>{
           const { lat, lng } = e.latlng
           try{ if (leafletMapRef.current._marker) leafletMapRef.current._marker.remove() }catch(e){}
-          leafletMapRef.current._marker = L.marker([lat,lng]).addTo(map)
           const pin = { id: Date.now(), lat, lng }
           setPins(p=>[pin, ...p])
           if (onPick) onPick(lat,lng)
+          // also add marker reference for later syncing
+          try{ leafletMarkersRef.current[pin.id] = L.marker([lat,lng]).addTo(map) }catch(e){}
+          leafletMapRef.current._marker = leafletMarkersRef.current[pin.id]
         })
       }
     }
 
-    const initGlobe = async () => {
-      try {
-        // load three and globe.gl and make sure three is available as window.THREE
-        const threeModule = await import('three')
-        const THREE = threeModule && (threeModule.default || threeModule)
-        if (typeof window !== 'undefined' && !window.THREE) window.THREE = THREE
-
-        const Globe = (await import('globe.gl')).default
-        const earthImg = 'https://raw.githubusercontent.com/roblabs/globe.gl/master/example/img/earth-blue-marble.jpg'
-
-        if (globeEl.current && !globeRef.current) {
-          // ensure container has explicit size
-          try{ globeEl.current.style.height = `${window.innerHeight - 64 - 24}px` }catch(e){}
-          globeEl.current.style.width = '100%'
-
-          // wait until container has positive dimensions
-          const waitForSize = (el, attempts = 40) => new Promise(res => {
-            let i = 0
-            const t = setInterval(()=>{
-              const w = el.clientWidth || el.offsetWidth
-              const h = el.clientHeight || el.offsetHeight
-              if (w > 0 && h > 0) { clearInterval(t); return res(true) }
-              i++
-              if (i>=attempts) { clearInterval(t); return res(false) }
-            }, 50)
-          })
-
-          await waitForSize(globeEl.current)
-
-          const g = Globe()(globeEl.current)
-            .globeImageUrl(earthImg)
-            .showAtmosphere(true)
-            .backgroundColor('#071027')
-            .enablePointerInteraction(true)
-            .autoRotate(true)
-            .autoRotateSpeed(0.35)
-            .pointsData([])
-            .pointAltitude(0.01)
-            .pointColor(()=>'#ff8c42')
-            .pointRadius(0.2)
-
-          globeRef.current = g
-
-          g.onGlobeClick(({ lat, lng })=>{
-            const pin = { id: Date.now(), lat, lng }
-            setPins(p=>[pin, ...p])
-            if (onPick) onPick(lat,lng)
-            try{ g.pointOfView({ lat, lng, altitude: 1.5 }, 800) }catch(e){}
-          })
-
-          // force renderer to match container
-          setTimeout(()=>{
-            try{
-              const renderer = g.renderer && g.renderer()
-              if (renderer && renderer.setSize) renderer.setSize(globeEl.current.clientWidth, globeEl.current.clientHeight)
-              if (renderer && renderer.domElement) {
-                renderer.domElement.style.width = '100%'
-                renderer.domElement.style.height = '100%'
-                renderer.domElement.style.display = 'block'
-              }
-            }catch(e){console.warn('globe renderer sizing error', e)}
-          }, 120)
-
-          const resizeHandler = () => {
-            try{
-              const renderer = g.renderer && g.renderer()
-              if (renderer && renderer.setSize) renderer.setSize(globeEl.current.clientWidth, globeEl.current.clientHeight)
-            }catch(e){}
-          }
-          window.addEventListener('resize', resizeHandler)
-          globeRef.current.__cleanupResize = () => window.removeEventListener('resize', resizeHandler)
-        }
-      } catch (err) {
-        console.error('Globe initialization failed', err)
-        setMapError('Failed to initialize 3D globe — check console for details')
-      }
-    }
-
-    if (projection === 'mercator') initLeaflet().catch(()=>{})
-    else initGlobe().catch(()=>{})
+    // Always initialize Leaflet free map when Mapbox token is not present.
+    initLeaflet().catch(()=>{})
 
     cleanup = ()=>{
       try{ if (leafletMapRef.current && leafletMapRef.current.map) leafletMapRef.current.map.remove() }catch(e){}
-      try{ if (globeRef.current) { const el = globeEl.current; if (el) el.innerHTML = '' } }catch(e){}
+      leafletMapRef.current = null
+      leafletMarkersRef.current = {}
+      // nothing globe-specific to clean up
       if (link && link.parentNode) link.parentNode.removeChild(link)
     }
 
     return cleanup
-  }, [projection])
+  }, [])
 
   const handleManualSubmit = (e)=>{
     e.preventDefault()
@@ -195,17 +120,14 @@ export default function MapPanel({ onPick }){
   }
 
   if (!token) {
-    // free map/globe view rendered; initialization handled by the main effect above
+    // free map view rendered; initialization handled by the main effect above
     return (
       <div style={{height:'100%', position:'relative', padding:12, boxSizing:'border-box'}}>
         <div style={{position:'absolute', zIndex:5, right:12, top:12, display:'flex', gap:8}}>
-          <button className="btn" onClick={()=>setProjection('globe')} aria-pressed={projection==='globe'} style={{minWidth:72}}>Globe</button>
-          <button className="btn" onClick={()=>setProjection('mercator')} aria-pressed={projection==='mercator'} style={{minWidth:72}}>Map</button>
           <button className="btn" onClick={()=>{
             // reset view: clear pins and recenter
             setPins([])
             try{ if (leafletMapRef.current && leafletMapRef.current.map) leafletMapRef.current.map.setView([20,78],3) }catch(e){}
-            try{ if (globeRef.current) globeRef.current.pointOfView({ lat:20, lng:78, altitude: 2 }, 800) }catch(e){}
           }} style={{minWidth:72}}>Reset</button>
         </div>
 
@@ -216,13 +138,19 @@ export default function MapPanel({ onPick }){
               <div style={{fontSize:12, color:'var(--muted)'}}>{pins.length} pins</div>
             </div>
             <div style={{marginTop:8, maxHeight:160, overflow:'auto'}}>
-              {pins.length===0 ? <div className="muted">No pins yet — click the globe or map to add.</div> : (
+              {pins.length===0 ? <div className="muted">No pins yet — click the map to add.</div> : (
                 pins.map(p=> (
                   <div key={p.id} style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:8}}>
                     <div style={{fontSize:13}}>{p.lat.toFixed(4)}, {p.lng.toFixed(4)}</div>
                     <div style={{display:'flex', gap:6}}>
-                      <button className="btn" onClick={()=>{ try{ if (globeRef.current) globeRef.current.pointOfView({ lat:p.lat, lng:p.lng, altitude:1.5 }, 500) }catch(e){} }} title="Focus">View</button>
-                      <button className="btn" onClick={()=>setPins(xs=>xs.filter(s=>s.id!==p.id))} title="Remove">✕</button>
+                      <button className="btn" onClick={()=>{ try{ if (leafletMapRef.current && leafletMapRef.current.map) leafletMapRef.current.map.setView([p.lat,p.lng], 10) }catch(e){} }} title="Focus">View</button>
+                      <button className="btn" onClick={()=>{
+                        // remove pin from state
+                        setPins(xs=>xs.filter(s=>s.id!==p.id))
+                        // remove leaflet marker if exists
+                        try{ const m = leafletMarkersRef.current[p.id]; if (m && leafletMapRef.current && leafletMapRef.current.map) { m.remove(); delete leafletMarkersRef.current[p.id] } }catch(e){}
+                        // no globe to remove
+                      }} title="Remove">✕</button>
                     </div>
                   </div>
                 ))
@@ -235,8 +163,7 @@ export default function MapPanel({ onPick }){
           </div>
         </div>
 
-        <div ref={freeMapEl} className="leaflet-container" style={{display: projection==='mercator' ? 'block' : 'none', height:'calc(100vh - 64px)', borderRadius:12, overflow:'hidden'}} />
-        <div ref={globeEl} className="globe-container" style={{display: projection==='globe' ? 'block' : 'none', height:'calc(100vh - 64px)', borderRadius:12, overflow:'hidden'}} />
+        <div ref={freeMapEl} className="leaflet-container" style={{height:'calc(100vh - 64px)', borderRadius:12, overflow:'hidden'}} />
 
         <div style={{position:'absolute', left:12, bottom:12}}>
           <button className="btn" onClick={handleGeolocate}>Use My Location</button>
@@ -248,8 +175,6 @@ export default function MapPanel({ onPick }){
   return (
     <div style={{position:'relative'}}>
       <div style={{position:'absolute', zIndex:3, right:12, top:12, display:'flex', gap:8}}>
-        <button className="btn" onClick={()=>setProjection('globe')} aria-pressed={projection==='globe'}>Globe</button>
-        <button className="btn" onClick={()=>setProjection('mercator')} aria-pressed={projection==='mercator'}>Map</button>
         <button className="btn" onClick={()=>{
           // reset view to world
           try{ const m = mapRef.current; if (m) m.flyTo({center:[0,20], zoom:1.5}) }catch(e){}

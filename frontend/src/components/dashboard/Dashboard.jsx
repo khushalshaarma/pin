@@ -86,6 +86,22 @@ export default function Dashboard({ location }){
           <div className="muted">Latest Photo</div>
           <motion.img src={(data.photos && data.photos[0] && data.photos[0].url) || 'https://picsum.photos/800/500?random=9'} alt="photo" className="visual-image" initial={{opacity:0, y:6}} animate={{opacity:1, y:0}} transition={{duration:0.6, delay:0.06}} />
         </div>
+        <div style={{marginTop:12}}>
+          <div className="muted">Live Webcam</div>
+          {data.webcams && data.webcams.length > 0 ? (
+            <div style={{marginTop:8}}>
+              <div className="muted">{data.webcams[0].title || 'Nearby Webcam'}</div>
+              {/* If the webcam url is an image we show it; otherwise render a link to open it */}
+              {typeof data.webcams[0].url === 'string' && (/\.(jpg|jpeg|png|gif)$/.test(data.webcams[0].url) || data.webcams[0].url.startsWith('http')) ? (
+                <motion.img src={data.webcams[0].url} alt="webcam" className="visual-image" initial={{opacity:0, y:6}} animate={{opacity:1, y:0}} transition={{duration:0.6, delay:0.12}} />
+              ) : (
+                <div className="muted">Live feed available — <a href={data.webcams[0].url} target="_blank" rel="noreferrer">open in new tab</a></div>
+              )}
+            </div>
+          ) : (
+            <div className="muted">No nearby webcams found</div>
+          )}
+        </div>
       </motion.div>
     </div>
   )

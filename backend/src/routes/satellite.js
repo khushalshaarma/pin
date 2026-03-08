@@ -9,8 +9,14 @@ const SAT_KEY = (process.env.SATELLITE_API_KEY || '').replace(/^"|"$/g, '').trim
 // If you want to use NASA Earth API or other endpoints that require a key, use process.env.SATELLITE_API_KEY.
 
 router.get('/proxy', async (req, res) => {
-  const { lat, lng } = req.query
+  let { lat, lng } = req.query
   if (!lat || !lng) return res.status(400).json({ error: 'lat & lng required' })
+  // normalize to numbers and constrain longitude to [-180,180]
+  lat = parseFloat(lat)
+  lng = parseFloat(lng)
+  if (!isFinite(lat) || !isFinite(lng)) return res.status(400).json({ error: 'invalid lat or lng' })
+  // normalize longitude into -180..180
+  lng = ((((lng + 180) % 360) + 360) % 360) - 180
 
   // We'll return a static map tile from NASA GIBS using the Global Imagery Browse Service (GIBS)
   // For simplicity use the MODIS Terra True Color (VIIRS or MODIS) layer via Web Map Tile Service URL pattern.
@@ -24,26 +30,35 @@ router.get('/proxy', async (req, res) => {
   // Using the Worldview API to get a static image (note: limited usage)
   const snapshotUrl = `https://worldview.earthdata.nasa.gov/thumbnail?&v=2020-01-01&x=${lng}&y=${lat}&z=6&w=800&h=400`
 
-  try{
+  try {
     if (SAT_KEY) {
       // Use NASA Earth Imagery API: returns an image for given lat/lon
       // Example: https://api.nasa.gov/planetary/earth/imagery?lat=1.5&lon=100.75&dim=0.15&api_key=DEMO_KEY
       const dim = 0.12
       const nasaUrl = `https://api.nasa.gov/planetary/earth/imagery?lat=${lat}&lon=${lng}&dim=${dim}&api_key=${SAT_KEY}`
-      const resp = await axios.get(nasaUrl, { responseType: 'arraybuffer', timeout: 10000 })
+      // increase timeout to allow NASA to respond
+      const resp = await axios.get(nasaUrl, { responseType: 'arraybuffer', timeout: 30000 })
       const contentType = resp.headers['content-type'] || 'image/jpeg'
       res.set('Content-Type', contentType)
       return res.send(Buffer.from(resp.data, 'binary'))
     }
 
-    // Redirect client to the snapshotUrl (so browser can load directly). This avoids proxying large binary through server.
+    // No key: redirect client to the snapshotUrl (so browser can load directly).
     return res.redirect(snapshotUrl)
-  }catch(err){
-    console.error('Satellite proxy error', err.message)
-    if (err.response){
-      console.error('Satellite service response', err.response.status, err.response.data)
+  } catch (err) {
+    // On error (timeout or provider error) fall back to a reliable static tile
+    console.error('Satellite proxy error', err && err.message)
+    if (err && err.response) {
+      console.error('Satellite service response', err.response.status)
     }
-    return res.status(500).json({ error: 'satellite proxy failed', detail: err.message })
+
+    // Fallback: use Wikimedia static map tile (no API key required)
+    const wikimedia = `https://maps.wikimedia.org/img/osm-intl,6,${lat},${lng},800x400.png`
+    try {
+      return res.redirect(wikimedia)
+    } catch (e) {
+      return res.status(500).json({ error: 'satellite proxy failed', detail: (err && err.message) || String(e) })
+    }
   }
 })
 

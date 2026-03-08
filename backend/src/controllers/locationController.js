@@ -30,7 +30,7 @@ exports.preview = async (req, res) => {
       weather = { temp: null, description: 'Unavailable', clouds: null, visibility: null, error: err.message }
     }
 
-    const [webcams, photosRaw, satelliteRaw] = await Promise.all([
+    const [webcamsRaw, photosRaw, satelliteRaw] = await Promise.all([
       webcamService.findNearby(lat, lng),
       photoService.searchNearby(lat, lng),
       satelliteService.getLatest(lat, lng)
@@ -48,6 +48,10 @@ exports.preview = async (req, res) => {
       ...satelliteRaw,
       url: satelliteRaw.url.startsWith('/') ? `${base}${satelliteRaw.url}` : satelliteRaw.url
     } : satelliteRaw
+    const webcams = (webcamsRaw || []).map(w => ({
+      ...w,
+      url: (w.url && w.url.startsWith('/')) ? `${base}${w.url}` : w.url
+    }))
 
     const analysis = analysisService.analyze({ weather, photos, webcams, satellite })
 
